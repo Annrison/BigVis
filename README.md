@@ -8,7 +8,7 @@ In this project, we analyzed a 600 million-article text network on MakeUp board 
 + [Slides of BigVis](https://drive.google.com/file/d/1Z_SfXEZtsx0edYhgUGCsfeqxdolwyCuc/view?usp=sharing)
 
 ### Tools
-+ R, shiny app 
++ R, shiny app, sparkR
 
 ### Data processing workflow
 
