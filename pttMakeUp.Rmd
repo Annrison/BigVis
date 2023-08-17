@@ -1,0 +1,241 @@
+---
+title: "批踢踢美妝版 關鍵詞網路分析"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    theme: default
+    css: data/JH.css
+    social: menu
+    source_code: embed 
+    logo: data/nsysu48.png
+    favicon: data/nsysu.png
+runtime: shiny
+---
+
+```{r}
+# .libPaths(c("/home/tonychuo/R/x86_64-redhat-linux-gnu-library/3.6",
+#             "/usr/lib64/R/library","/usr/share/R/library") )
+
+pacman::p_load(shiny,shinyWidgets,shinythemes,flexdashboard)
+pacman::p_load(dplyr,visNetwork,reshape2,stringr,DT,RColorBrewer)
+pals16 = c(brewer.pal(12,"Set3"),brewer.pal(8,"Set1")[1:4])
+
+# gc()
+load("CO_ptt_new.rdata")
+E = dict
+```
+
+詳細設定 {data-icon="fa-cogs"}
+=====================================================
+
+Row {data-height=75%}
+-----------------------------------------------------
+### {data-width=25%}
+```{r}
+ctag = c('', '')
+
+chooseSliderSkin("Modern")
+h6("以特定主題為中心，從文集中選出相關性最高的關鍵詞，並對它們進行社會網絡分析")
+
+# Z 是品牌
+pickerInput(
+  inputId="Z", label = "選擇品牌", 
+  choices = sort(E$kword[E$class=="brand"]),
+  options = list(`live-search`=T, style="btn-success"),
+  selected = "Taiwan")
+
+sliderInput("K",  "設定網路節點數量",  4, 32, 16, 1)
+sliderInput("Q",  "依關聯強度篩選鏈結",   0, 1,  0.5, 0.01)
+        
+prettyRadioButtons(
+  "Unit", "字詞連結段落", choices = list("句"=1, "段"=2, "篇"=3),
+  selected = 1, inline=T, status="success")
+        
+prettyRadioButtons(
+  "Cor", "連結強度計算方式", 
+  choices = list("共同出現次數"=0, "相關係數"=1),
+  selected = 1, inline=F, status="success")
+
+SX = reactive({
+  VN = input$VN
+  if(is.null(VN)) return(NULL)
+  if(length(VN$nodes) > 0) {
+    k = VN$nodes[[1]] %>% as.integer
+    v = XX$Sent[,k]
+    }
+  else if(length(VN$edges) > 0) {
+    k = strsplit(VN$edges[[1]],"-")[[1]] %>% as.integer
+    v = rowSums(XX$Sent[,k]) == 2 
+  }
+  else return(NULL)
+  
+  df = S[v,] %>% 
+    left_join(data.frame(
+      did=1:nrow(pMakeup), 
+      dtime = format(pMakeup$artDate, format="%Y-%m-%d"),
+      title = pMakeup$artTitle,
+      content = pMakeup$artContent
+      ))%>%
+    arrange(desc(dtime)) %>% 
+    as.data.frame() %>% head(200)
+  
+  list(df=df, k=k, v=v)
+  })
+
+```
+
+### {data-width=75%}
+```{r}
+
+#input = list(Z="m.a.c", K=16, Q=0.5,Cor = 1,Unit = 1)
+
+vis_network = function() {
+  
+  v=CR$Docu[which(E$kword == input$Z),]
+  
+  si = order(-v)[1:input$K]; v[si]
+  u = as.integer(input$Unit)
+
+  if(input$Cor=="1") {
+    x = CR[[u]][si,si] } else {
+      x = CO[[u]][si,si]
+    }
+
+  tt = with(E, sprintf(
+  "%s: %s(%s,%d)",kword[si],label[si],
+  class[si],  freq[si])) %>%  #sub_class[si],
+    
+  str_replace(",NA,", ",")
+  nodes = data.frame(
+    id = si, #1:nrow(x), 
+    
+    label=E$kword[si], title=tt,
+    group=E$class[si], value=sqrt(E$freq[si]), #si=si, 
+    stringsAsFactors=F)
+
+  colnames(x) = rownames(x) = si
+  x[lower.tri(x,T)] = 0
+  x = subset(melt(x), value > 0)
+  links = subset(x, value >= quantile(value, input$Q))
+  names(links)[1:2] = c('from','to')
+  links$value = sqrt(links$value)
+  links$id = paste0(links$from, "-", links$to)
+
+  JS1 = "function(vis) {Shiny.onInputChange('VN', vis);}"
+  visNetwork(nodes, links, width="100%", height="100%") %>%
+    visPhysics("forceAtlas2Based") %>%
+    visEdges(color=list(highlight='pink', opacity=0.35)) %>% 
+    visOptions(manipulation=F, highlightNearest=F) %>% 
+    visEvents(selectNode=JS1, selectEdge=JS1, 
+              deselectNode=JS1, deselectEdge=JS1) %>% 
+    
+    visGroups(groupname="brand", color=pals16[1]) %>% 
+    visGroups(groupname="condition", color=pals16[2]) %>% 
+    visGroups(groupname="emtion", color=pals16[3]) %>% 
+    visGroups(groupname="feature", color=pals16[4]) %>% 
+    visGroups(groupname="problem", color=pals16[5]) %>% 
+    visGroups(groupname="product", color=pals16[6]) %>% 
+    
+    visLegend(width=0.1, stepY=100, useGroups=F, addNodes=data.frame(
+      label=unique(E$class), shape='square', color=pals16[1:6]) 
+      )
+  }
+
+
+renderVisNetwork( vis_network() )
+
+```
+
+
+Row {data-height=25%}
+-----------------------------------------------------
+### {data-width=35%}
+```{r}
+# renderPrint({
+#   print( SX()$k )
+#   print( dim( SX()$v ) )
+#   })
+
+ctag = c(
+  '<span style="color:red;">', 
+  '<span style="color:green;">'
+  )
+
+RowSel = eventReactive( # to prevent race-around
+  input$myTable_rows_selected, {input$myTable_rows_selected})
+
+renderDataTable({
+  if(class(SX()) == 'list') {
+    i = RowSel()
+    df = SX()$df[i,]; k = SX()$k
+    df$z = paste0('',df$title,': ',df$content)
+    for(j in 1:length(k)) df$z = str_replace_all(
+      df$z, regex(paste0('(',E$alias[k[j]],')'), E$case[k[j]]),
+      paste0(ctag[j], '\\1</span>')
+      )
+    datatable(
+      df[,'z',drop=F],escape=F,rownames=F,colnames=c('The Selected Article'),
+      extensions=c('Scroller'),options=list(
+        scrollY="225px",scrollX=F,paging=F,searching=F,ordering=F,info=F)
+      ) %>% formatStyle(columns=0:2, fontSize = '85%')
+    }
+  })
+
+
+```
+
+### {data-width=65%}
+```{r}
+# renderTable({
+#   reg = paste0(
+#     "(",
+#     paste0(E$kword[SX()$k],collapse = "|"),
+#     ")"
+#     )
+#   SX()$df %>% 
+#     mutate(txt = str_replace_all(
+#       txt,reg, 
+#       "『\\1』"))
+#   
+# })
+
+# create and render `output$myTable`  
+ctag = c(
+  '<span style="color:red;">', 
+  '<span style="color:green;">'
+  )
+
+uiOutput("dynamic")
+output$dynamic <- renderUI({ dataTableOutput("myTable") })
+output$myTable <- renderDataTable({
+  if(!is.null(SX())) {
+    k = SX()$k; df = SX()$df[,c('dtime','txt')]
+    df$z = df$txt
+    cname=sprintf('Recent Co-Accurance (%d): ',nrow(df))
+    for(i in 1:length(k)) {
+      if(i > 1) cname = paste0(cname, " and ")
+      cname = paste0(cname, ctag[i], E$kword[k[i]], '</span>')
+      df$z = str_replace_all(
+      df$z, regex(paste0('(',E$alias[k[i]],')'), E$case[k[i]]),
+      paste0(ctag[i], '\\1</span>') )
+      }
+    datatable(
+      df[,c('dtime','z')],escape=F,rownames=F,
+      colnames=c('dtime', cname),
+      extensions=c('Scroller','Select'),
+      selection=list(mode='single', selected=c(1), target='row'),
+      options=list(
+      scrollY="225px",scrollX=F,paging=F,searching=F,ordering=F,
+      select = list(style='single'),info=F
+      )) %>%
+      formatStyle(columns=0:2, fontSize = '90%')
+    } })
+
+```
+
+
+社會網路圖 {data-icon="fa-share-alt"}
+=====================================================
+```{r}
+renderVisNetwork( vis_network() )
+```
